@@ -4,8 +4,8 @@ import Fastify from "fastify";
 import { createHealthReport, mgwaiosVersion } from "@mgwaios/core";
 import { readDatabaseConfig } from "@mgwaios/db";
 
-dotenv.config({ path: ".env.local" });
-dotenv.config();
+dotenv.config({ path: ".env.local", quiet: true });
+dotenv.config({ quiet: true });
 
 const host = process.env.API_HOST ?? "0.0.0.0";
 const port = Number(process.env.API_PORT ?? "4000");

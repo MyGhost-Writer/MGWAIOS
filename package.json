@@ -10,6 +10,7 @@
     "build:packages": "npm run build -w @mgwaios/shared && npm run build -w @mgwaios/core && npm run build -w @mgwaios/agents && npm run build -w @mgwaios/connectors && npm run build -w @mgwaios/db",
     "check": "npm run build:packages && npm run check:apps",
     "check:apps": "npm run check -w @mgwaios/api && npm run check -w @mgwaios/worker && npm run check -w @mgwaios/web",
+    "db:migrate": "tsx scripts/migrate.ts",
     "dev:api": "npm run dev -w @mgwaios/api",
     "dev:worker": "npm run dev -w @mgwaios/worker",
     "dev:web": "npm run dev -w @mgwaios/web",
@@ -24,8 +25,12 @@
   },
   "devDependencies": {
     "@types/node": "^20.17.10",
+    "@types/pg": "^8.20.0",
     "prettier": "^3.4.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "pg": "^8.21.0"
   }
 }

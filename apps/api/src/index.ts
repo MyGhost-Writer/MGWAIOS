@@ -1,6 +1,7 @@
 import cors from "@fastify/cors";
 import dotenv from "dotenv";
 import Fastify from "fastify";
+import { runNextTask } from "@mgwaios/agents";
 import { createHealthReport, mgwaiosVersion } from "@mgwaios/core";
 import { CompanyOsRepository, createPostgresPool, readDatabaseConfig } from "@mgwaios/db";
 import { z } from "zod";
@@ -164,6 +165,26 @@ app.get("/companies/:slug/artifacts", async (request) => {
 
   return {
     artifacts: await repository.listArtifacts(params.slug, query.taskId),
+  };
+});
+
+app.post("/worker/run-next", async (request, reply) => {
+  const openAiApiKey = process.env.OPENAI_API_KEY;
+
+  if (!openAiApiKey) {
+    return reply.code(503).send({
+      error: "missing_openai_api_key",
+      message: "OPENAI_API_KEY is required to run worker tasks.",
+    });
+  }
+
+  const result = await runNextTask(repository, {
+    apiKey: openAiApiKey,
+    model: process.env.OPENAI_MODEL ?? "gpt-5.2",
+  });
+
+  return {
+    worker: result,
   };
 });
 

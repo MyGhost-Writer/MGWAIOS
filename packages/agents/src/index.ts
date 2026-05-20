@@ -1,5 +1,5 @@
 import type { AgentRecipeRef, TaskPacket } from "@mgwaios/shared";
-import type { MemoryEntryRecord, TaskRecord } from "@mgwaios/db";
+import type { CompanyOsRepository, MemoryEntryRecord, TaskRecord } from "@mgwaios/db";
 import OpenAI from "openai";
 
 export interface WorkerPlan {
@@ -38,6 +38,14 @@ export interface AgentRunOutput {
   resultSummary: string;
 }
 
+export interface RunNextTaskResult {
+  status: "idle" | "completed" | "failed";
+  taskId?: string;
+  artifactId?: string;
+  summary?: string;
+  error?: string;
+}
+
 export async function runTaskAgent(
   input: AgentRunInput,
   config: AgentRunnerConfig,
@@ -60,6 +68,55 @@ export async function runTaskAgent(
     bodyMarkdown,
     resultSummary: summarizeResult(modelOutput),
   };
+}
+
+export async function runNextTask(
+  repository: CompanyOsRepository,
+  config: AgentRunnerConfig,
+): Promise<RunNextTaskResult> {
+  const task = await repository.claimNextDraftTask();
+
+  if (!task) {
+    return {
+      status: "idle",
+      summary: "No draft tasks found.",
+    };
+  }
+
+  try {
+    const memoryEntries = await repository.listTaskMemory(task.id);
+    const output = await runTaskAgent(
+      {
+        task,
+        memoryEntries,
+      },
+      config,
+    );
+
+    const result = await repository.completeTaskWithArtifact({
+      taskId: task.id,
+      title: output.title,
+      bodyMarkdown: output.bodyMarkdown,
+      resultSummary: output.resultSummary,
+      reviewStatus: "draft",
+    });
+
+    return {
+      status: "completed",
+      taskId: result.task.id,
+      artifactId: result.artifact.id,
+      summary: result.task.resultSummary ?? undefined,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown worker error.";
+    await repository.failTask(task.id, message);
+
+    return {
+      status: "failed",
+      taskId: task.id,
+      error: message,
+    };
+  }
 }
 
 function buildInstructions(): string {

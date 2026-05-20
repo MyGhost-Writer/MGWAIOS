@@ -9,6 +9,8 @@
     "dev": "tsx src/index.ts"
   },
   "dependencies": {
-    "@mgwaios/shared": "file:../../packages/shared"
+    "@mgwaios/shared": "file:../../packages/shared",
+    "@supabase/ssr": "^0.10.3",
+    "@supabase/supabase-js": "^2.106.0"
   }
 }

@@ -11,6 +11,7 @@
     "check": "npm run build:packages && npm run check:apps",
     "check:apps": "npm run check -w @mgwaios/api && npm run check -w @mgwaios/worker && npm run check -w @mgwaios/web",
     "db:migrate": "tsx scripts/migrate.ts",
+    "db:verify": "tsx scripts/verify-db.ts",
     "dev:api": "npm run dev -w @mgwaios/api",
     "dev:worker": "npm run dev -w @mgwaios/worker",
     "dev:web": "npm run dev -w @mgwaios/web",

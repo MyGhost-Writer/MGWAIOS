@@ -1,0 +1,14 @@
+{
+  "name": "@mgwaios/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "dev": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@mgwaios/shared": "file:../../packages/shared"
+  }
+}

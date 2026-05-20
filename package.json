@@ -1,0 +1,31 @@
+{
+  "name": "mgwaios",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MGWAIOS company-aware AI operating system.",
+  "type": "module",
+  "scripts": {
+    "build": "npm run build:packages && npm run build:apps",
+    "build:apps": "npm run build -w @mgwaios/api && npm run build -w @mgwaios/worker && npm run build -w @mgwaios/web",
+    "build:packages": "npm run build -w @mgwaios/shared && npm run build -w @mgwaios/core && npm run build -w @mgwaios/agents && npm run build -w @mgwaios/connectors && npm run build -w @mgwaios/db",
+    "check": "npm run build:packages && npm run check:apps",
+    "check:apps": "npm run check -w @mgwaios/api && npm run check -w @mgwaios/worker && npm run check -w @mgwaios/web",
+    "dev:api": "npm run dev -w @mgwaios/api",
+    "dev:worker": "npm run dev -w @mgwaios/worker",
+    "dev:web": "npm run dev -w @mgwaios/web",
+    "format": "prettier --write ."
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.10",
+    "prettier": "^3.4.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

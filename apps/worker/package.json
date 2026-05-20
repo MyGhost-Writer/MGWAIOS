@@ -1,0 +1,17 @@
+{
+  "name": "@mgwaios/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@mgwaios/agents": "file:../../packages/agents",
+    "@mgwaios/core": "file:../../packages/core",
+    "@mgwaios/shared": "file:../../packages/shared"
+  }
+}

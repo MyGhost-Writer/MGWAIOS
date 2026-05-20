@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { Client } from "pg";
 
+dotenv.config({ path: "../../.env.local", quiet: true });
 dotenv.config({ path: ".env.local", quiet: true });
 dotenv.config({ quiet: true });
 

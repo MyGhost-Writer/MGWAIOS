@@ -10,6 +10,10 @@
     "check": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@mgwaios/shared": "file:../shared"
+    "@mgwaios/db": "file:../db",
+    "@mgwaios/shared": "file:../shared",
+    "dotenv": "^17.4.2",
+    "openai": "^6.38.0",
+    "zod": "^4.4.3"
   }
 }

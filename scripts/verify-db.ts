@@ -1,6 +1,7 @@
 import dotenv from "dotenv";
 import { Client } from "pg";
 
+dotenv.config({ path: "../../.env.local", quiet: true });
 dotenv.config({ path: ".env.local", quiet: true });
 dotenv.config({ quiet: true });
 

@@ -70,6 +70,19 @@ export interface TaskRecord {
   updatedAt: string;
 }
 
+export interface ArtifactRecord {
+  id: string;
+  companyId: string;
+  taskId: string | null;
+  artifactType: string;
+  title: string;
+  storagePath: string | null;
+  bodyMarkdown: string | null;
+  reviewStatus: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface CreateMemoryEntryInput {
   companySlug: string;
   category: string;
@@ -240,6 +253,190 @@ export class CompanyOsRepository {
     return result.rows.map(mapTaskRow);
   }
 
+  async getTaskById(taskId: string): Promise<TaskRecord | null> {
+    const result = await this.pool.query<TaskRow>(
+      `
+        select id, company_id, project_slug, requested_by, goal, status,
+          priority, assigned_agent_recipe_id, context, expected_output,
+          result_summary, created_at, updated_at
+        from public.tasks
+        where id = $1;
+      `,
+      [taskId],
+    );
+
+    return result.rows[0] ? mapTaskRow(result.rows[0]) : null;
+  }
+
+  async listTaskMemory(taskId: string, limit = 8): Promise<MemoryEntryRecord[]> {
+    const result = await this.pool.query<MemoryEntryRow>(
+      `
+        select m.id, m.company_id, m.category, m.claim, m.details, m.confidence, m.status,
+          m.source_id, m.created_at, m.updated_at
+        from public.memory_entries m
+        join public.tasks t on t.company_id = m.company_id
+        where t.id = $1
+          and m.status = 'approved'
+        order by
+          case
+            when lower(t.goal) like '%' || lower(m.category) || '%' then 0
+            else 1
+          end,
+          m.created_at desc
+        limit $2;
+      `,
+      [taskId, limit],
+    );
+
+    return result.rows.map(mapMemoryEntryRow);
+  }
+
+  async claimNextDraftTask(): Promise<TaskRecord | null> {
+    const client = await this.pool.connect();
+
+    try {
+      await client.query("begin");
+
+      const result = await client.query<TaskRow>(`
+        select id, company_id, project_slug, requested_by, goal, status,
+          priority, assigned_agent_recipe_id, context, expected_output,
+          result_summary, created_at, updated_at
+        from public.tasks
+        where status = 'draft'
+        order by
+          case priority
+            when 'urgent' then 0
+            when 'high' then 1
+            when 'normal' then 2
+            when 'low' then 3
+            else 4
+          end,
+          created_at
+        limit 1
+        for update skip locked;
+      `);
+
+      const task = result.rows[0];
+
+      if (!task) {
+        await client.query("commit");
+        return null;
+      }
+
+      const updated = await client.query<TaskRow>(
+        `
+          update public.tasks
+          set status = 'running'
+          where id = $1
+          returning id, company_id, project_slug, requested_by, goal, status,
+            priority, assigned_agent_recipe_id, context, expected_output,
+            result_summary, created_at, updated_at;
+        `,
+        [task.id],
+      );
+
+      await client.query("commit");
+
+      return updated.rows[0] ? mapTaskRow(updated.rows[0]) : null;
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async completeTaskWithArtifact(input: {
+    taskId: string;
+    title: string;
+    bodyMarkdown: string;
+    resultSummary: string;
+    artifactType?: string;
+    reviewStatus?: "draft" | "needs_review" | "approved";
+  }): Promise<{ task: TaskRecord; artifact: ArtifactRecord }> {
+    const client = await this.pool.connect();
+
+    try {
+      await client.query("begin");
+
+      const taskResult = await client.query<TaskRow>(
+        `
+          update public.tasks
+          set status = 'completed',
+            result_summary = $2
+          where id = $1
+          returning id, company_id, project_slug, requested_by, goal, status,
+            priority, assigned_agent_recipe_id, context, expected_output,
+            result_summary, created_at, updated_at;
+        `,
+        [input.taskId, input.resultSummary],
+      );
+
+      const task = taskResult.rows[0];
+
+      if (!task) {
+        throw new Error(`Task not found: ${input.taskId}`);
+      }
+
+      const artifactResult = await client.query<ArtifactRow>(
+        `
+          insert into public.artifacts (
+            company_id,
+            task_id,
+            artifact_type,
+            title,
+            body_markdown,
+            review_status
+          )
+          values ($1, $2, $3, $4, $5, $6)
+          returning id, company_id, task_id, artifact_type, title, storage_path,
+            body_markdown, review_status, created_at, updated_at;
+        `,
+        [
+          task.company_id,
+          input.taskId,
+          input.artifactType ?? "agent_output",
+          input.title,
+          input.bodyMarkdown,
+          input.reviewStatus ?? "draft",
+        ],
+      );
+
+      await client.query("commit");
+
+      return {
+        task: mapTaskRow(task),
+        artifact: mapArtifactRow(artifactResult.rows[0]!),
+      };
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async failTask(taskId: string, resultSummary: string): Promise<TaskRecord> {
+    const result = await this.pool.query<TaskRow>(
+      `
+        update public.tasks
+        set status = 'failed',
+          result_summary = $2
+        where id = $1
+        returning id, company_id, project_slug, requested_by, goal, status,
+          priority, assigned_agent_recipe_id, context, expected_output,
+          result_summary, created_at, updated_at;
+      `,
+      [taskId, resultSummary],
+    );
+
+    if (!result.rows[0]) {
+      throw new Error(`Task not found: ${taskId}`);
+    }
+
+    return mapTaskRow(result.rows[0]);
+  }
+
   async createTask(input: CreateTaskInput): Promise<TaskRecord> {
     const result = await this.pool.query<TaskRow>(
       `
@@ -275,6 +472,23 @@ export class CompanyOsRepository {
     }
 
     return mapTaskRow(result.rows[0]);
+  }
+
+  async listArtifacts(companySlug: string, taskId?: string): Promise<ArtifactRecord[]> {
+    const result = await this.pool.query<ArtifactRow>(
+      `
+        select a.id, a.company_id, a.task_id, a.artifact_type, a.title,
+          a.storage_path, a.body_markdown, a.review_status, a.created_at, a.updated_at
+        from public.artifacts a
+        join public.companies c on c.id = a.company_id
+        where c.slug = $1
+          and ($2::uuid is null or a.task_id = $2)
+        order by a.created_at desc;
+      `,
+      [companySlug, taskId ?? null],
+    );
+
+    return result.rows.map(mapArtifactRow);
   }
 }
 
@@ -314,6 +528,19 @@ interface TaskRow {
   context: Record<string, unknown>;
   expected_output: string | null;
   result_summary: string | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+interface ArtifactRow {
+  id: string;
+  company_id: string;
+  task_id: string | null;
+  artifact_type: string;
+  title: string;
+  storage_path: string | null;
+  body_markdown: string | null;
+  review_status: string;
   created_at: Date;
   updated_at: Date;
 }
@@ -359,6 +586,21 @@ function mapTaskRow(row: TaskRow): TaskRecord {
     context: row.context,
     expectedOutput: row.expected_output,
     resultSummary: row.result_summary,
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString(),
+  };
+}
+
+function mapArtifactRow(row: ArtifactRow): ArtifactRecord {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    taskId: row.task_id,
+    artifactType: row.artifact_type,
+    title: row.title,
+    storagePath: row.storage_path,
+    bodyMarkdown: row.body_markdown,
+    reviewStatus: row.review_status,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };

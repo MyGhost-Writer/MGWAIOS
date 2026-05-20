@@ -12,6 +12,8 @@
   "dependencies": {
     "@mgwaios/agents": "file:../../packages/agents",
     "@mgwaios/core": "file:../../packages/core",
-    "@mgwaios/shared": "file:../../packages/shared"
+    "@mgwaios/db": "file:../../packages/db",
+    "@mgwaios/shared": "file:../../packages/shared",
+    "dotenv": "^17.4.2"
   }
 }

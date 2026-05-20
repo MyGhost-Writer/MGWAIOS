@@ -5,6 +5,7 @@ import { createHealthReport, mgwaiosVersion } from "@mgwaios/core";
 import { CompanyOsRepository, createPostgresPool, readDatabaseConfig } from "@mgwaios/db";
 import { z } from "zod";
 
+dotenv.config({ path: "../../.env.local", quiet: true });
 dotenv.config({ path: ".env.local", quiet: true });
 dotenv.config({ quiet: true });
 
@@ -151,6 +152,19 @@ app.post("/companies/:slug/tasks", async (request, reply) => {
 
     throw error;
   }
+});
+
+app.get("/companies/:slug/artifacts", async (request) => {
+  const params = companyParamsSchema.parse(request.params);
+  const query = z
+    .object({
+      taskId: z.string().uuid().optional(),
+    })
+    .parse(request.query);
+
+  return {
+    artifacts: await repository.listArtifacts(params.slug, query.taskId),
+  };
 });
 
 try {

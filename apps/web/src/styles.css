@@ -221,7 +221,7 @@ h3 {
 
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 12px;
 }
 
@@ -252,6 +252,108 @@ h3 {
   grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
   gap: 18px;
   align-items: start;
+}
+
+.agents-layout {
+  display: grid;
+  grid-template-columns: 360px minmax(0, 1fr);
+  gap: 14px;
+}
+
+.agent-card-grid {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.agent-card {
+  text-align: left;
+  border: 1px solid #e3e7e5;
+  background: #fbfcfb;
+  border-radius: 8px;
+  padding: 13px;
+  display: grid;
+  gap: 6px;
+  color: #172026;
+}
+
+.agent-card.active {
+  border-color: #186c5d;
+  background: #eff9f5;
+}
+
+.agent-card span,
+.agent-card small,
+.agent-status {
+  color: #66736f;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.agent-card strong {
+  font-size: 16px;
+}
+
+.agent-detail {
+  border: 1px solid #e3e7e5;
+  border-radius: 8px;
+  padding: 16px;
+  background: #fbfcfb;
+  min-width: 0;
+}
+
+.agent-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+
+.agent-editor-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.4fr) minmax(0, 0.6fr);
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.agent-editor-grid label {
+  display: grid;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.agent-editor-grid select,
+.agent-editor-grid input {
+  width: 100%;
+  border: 1px solid #ccd5d2;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #172026;
+  padding: 11px 12px;
+}
+
+.agent-rules {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.agent-rules h4 {
+  margin: 0 0 8px;
+}
+
+.agent-rules ul {
+  margin: 0;
+  padding-left: 18px;
+  color: #43504c;
+}
+
+.agent-task-form {
+  margin-bottom: 0;
 }
 
 .side-stack {
@@ -460,6 +562,7 @@ h3 {
 
   .main-grid,
   .artifact-layout,
+  .agents-layout,
   .metric-grid {
     grid-template-columns: 1fr;
   }
@@ -475,6 +578,11 @@ h3 {
   }
 
   .form-row {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-editor-grid,
+  .agent-rules {
     grid-template-columns: 1fr;
   }
 

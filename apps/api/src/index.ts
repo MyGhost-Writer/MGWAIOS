@@ -34,7 +34,32 @@ const createMemoryBodySchema = z.object({
 const createTaskBodySchema = z.object({
   requestedBy: z.string().min(1),
   goal: z.string().min(1),
+  agentProfileId: z.string().uuid().optional(),
   projectSlug: z.string().min(1).optional(),
+  priority: z.enum(["low", "normal", "high", "urgent"]).optional(),
+  context: z.record(z.string(), z.unknown()).optional(),
+  expectedOutput: z.string().optional(),
+});
+
+const agentParamsSchema = z.object({
+  id: z.string().uuid(),
+});
+
+const updateAgentBodySchema = z.object({
+  name: z.string().min(1).optional(),
+  department: z.string().min(1).optional(),
+  mission: z.string().min(1).optional(),
+  tone: z.string().optional(),
+  status: z.enum(["active", "paused"]).optional(),
+  personalityPresetId: z.string().uuid().nullable().optional(),
+  memoryScope: z.string().min(1).optional(),
+  allowedTasks: z.array(z.string().min(1)).optional(),
+  approvalRules: z.array(z.string().min(1)).optional(),
+});
+
+const createAgentTaskBodySchema = z.object({
+  requestedBy: z.string().min(1),
+  goal: z.string().min(1),
   priority: z.enum(["low", "normal", "high", "urgent"]).optional(),
   context: z.record(z.string(), z.unknown()).optional(),
   expectedOutput: z.string().optional(),
@@ -89,6 +114,74 @@ app.get("/companies/:slug", async (request, reply) => {
   }
 
   return { company };
+});
+
+app.get("/personality-presets", async () => ({
+  personalityPresets: await repository.listPersonalityPresets(),
+}));
+
+app.get("/companies/:slug/agents", async (request) => {
+  const params = companyParamsSchema.parse(request.params);
+
+  return {
+    agents: await repository.listAgentProfiles(params.slug),
+  };
+});
+
+app.get("/agents/:id", async (request, reply) => {
+  const params = agentParamsSchema.parse(request.params);
+  const agent = await repository.getAgentProfile(params.id);
+
+  if (!agent) {
+    return reply.code(404).send({
+      error: "agent_not_found",
+      message: `Agent profile not found: ${params.id}`,
+    });
+  }
+
+  return { agent };
+});
+
+app.patch("/agents/:id", async (request, reply) => {
+  const params = agentParamsSchema.parse(request.params);
+  const body = updateAgentBodySchema.parse(request.body);
+
+  try {
+    const agent = await repository.updateAgentProfile(params.id, body);
+    return { agent };
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Agent profile not found")) {
+      return reply.code(404).send({
+        error: "agent_not_found",
+        message: error.message,
+      });
+    }
+
+    throw error;
+  }
+});
+
+app.post("/agents/:id/tasks", async (request, reply) => {
+  const params = agentParamsSchema.parse(request.params);
+  const body = createAgentTaskBodySchema.parse(request.body);
+
+  try {
+    const task = await repository.createTaskForAgent({
+      agentProfileId: params.id,
+      ...body,
+    });
+
+    return reply.code(201).send({ task });
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Agent profile not found")) {
+      return reply.code(404).send({
+        error: "agent_not_found",
+        message: error.message,
+      });
+    }
+
+    throw error;
+  }
 });
 
 app.get("/companies/:slug/memory", async (request) => {

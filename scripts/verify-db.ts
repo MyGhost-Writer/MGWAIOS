@@ -18,6 +18,8 @@ const expectedTables = [
   "company_sources",
   "decisions",
   "memory_entries",
+  "agent_profiles",
+  "personality_presets",
   "schema_migrations",
   "source_notes",
   "tasks",

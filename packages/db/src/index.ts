@@ -63,9 +63,39 @@ export interface TaskRecord {
   status: string;
   priority: string;
   assignedAgentRecipeId: string | null;
+  agentProfileId: string | null;
   context: Record<string, unknown>;
   expectedOutput: string | null;
   resultSummary: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PersonalityPresetRecord {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  tone: string;
+  behaviorNotes: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentProfileRecord {
+  id: string;
+  companyId: string;
+  personalityPresetId: string | null;
+  personalityPreset: PersonalityPresetRecord | null;
+  slug: string;
+  name: string;
+  department: string;
+  mission: string;
+  tone: string | null;
+  status: string;
+  memoryScope: string;
+  allowedTasks: string[];
+  approvalRules: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -94,12 +124,34 @@ export interface CreateMemoryEntryInput {
 
 export interface CreateTaskInput {
   companySlug: string;
+  agentProfileId?: string;
   requestedBy: string;
   goal: string;
   projectSlug?: string;
   priority?: "low" | "normal" | "high" | "urgent";
   context?: Record<string, unknown>;
   expectedOutput?: string;
+}
+
+export interface UpdateAgentProfileInput {
+  name?: string;
+  department?: string;
+  mission?: string;
+  tone?: string;
+  status?: "active" | "paused";
+  personalityPresetId?: string | null;
+  memoryScope?: string;
+  allowedTasks?: string[];
+  approvalRules?: string[];
+}
+
+export interface CreateAgentTaskInput {
+  agentProfileId: string;
+  requestedBy: string;
+  goal: string;
+  priority?: "low" | "normal" | "high" | "urgent";
+  expectedOutput?: string;
+  context?: Record<string, unknown>;
 }
 
 export function readDatabaseConfig(env: NodeJS.ProcessEnv = process.env): DatabaseConfig {
@@ -184,6 +236,103 @@ export class CompanyOsRepository {
     return result.rows[0] ? mapCompanyRow(result.rows[0]) : null;
   }
 
+  async listPersonalityPresets(): Promise<PersonalityPresetRecord[]> {
+    const result = await this.pool.query<PersonalityPresetRow>(`
+      select id, slug, name, description, tone, behavior_notes, created_at, updated_at
+      from public.personality_presets
+      order by name;
+    `);
+
+    return result.rows.map(mapPersonalityPresetRow);
+  }
+
+  async listAgentProfiles(companySlug: string): Promise<AgentProfileRecord[]> {
+    const result = await this.pool.query<AgentProfileRow>(
+      `
+        select
+          a.id, a.company_id, a.personality_preset_id, a.slug, a.name,
+          a.department, a.mission, a.tone, a.status, a.memory_scope,
+          a.allowed_tasks, a.approval_rules, a.created_at, a.updated_at,
+          p.slug as preset_slug, p.name as preset_name, p.description as preset_description,
+          p.tone as preset_tone, p.behavior_notes as preset_behavior_notes,
+          p.created_at as preset_created_at, p.updated_at as preset_updated_at
+        from public.agent_profiles a
+        join public.companies c on c.id = a.company_id
+        left join public.personality_presets p on p.id = a.personality_preset_id
+        where c.slug = $1
+        order by a.department, a.name;
+      `,
+      [companySlug],
+    );
+
+    return result.rows.map(mapAgentProfileRow);
+  }
+
+  async getAgentProfile(agentProfileId: string): Promise<AgentProfileRecord | null> {
+    const result = await this.pool.query<AgentProfileRow>(
+      `
+        select
+          a.id, a.company_id, a.personality_preset_id, a.slug, a.name,
+          a.department, a.mission, a.tone, a.status, a.memory_scope,
+          a.allowed_tasks, a.approval_rules, a.created_at, a.updated_at,
+          p.slug as preset_slug, p.name as preset_name, p.description as preset_description,
+          p.tone as preset_tone, p.behavior_notes as preset_behavior_notes,
+          p.created_at as preset_created_at, p.updated_at as preset_updated_at
+        from public.agent_profiles a
+        left join public.personality_presets p on p.id = a.personality_preset_id
+        where a.id = $1;
+      `,
+      [agentProfileId],
+    );
+
+    return result.rows[0] ? mapAgentProfileRow(result.rows[0]) : null;
+  }
+
+  async updateAgentProfile(
+    agentProfileId: string,
+    input: UpdateAgentProfileInput,
+  ): Promise<AgentProfileRecord> {
+    const current = await this.getAgentProfile(agentProfileId);
+
+    if (!current) {
+      throw new Error(`Agent profile not found: ${agentProfileId}`);
+    }
+
+    const result = await this.pool.query<{ id: string }>(
+      `
+        update public.agent_profiles
+        set
+          name = $2,
+          department = $3,
+          mission = $4,
+          tone = $5,
+          status = $6,
+          personality_preset_id = $7,
+          memory_scope = $8,
+          allowed_tasks = $9,
+          approval_rules = $10
+        where id = $1
+        returning id;
+      `,
+      [
+        agentProfileId,
+        input.name ?? current.name,
+        input.department ?? current.department,
+        input.mission ?? current.mission,
+        input.tone ?? current.tone,
+        input.status ?? (current.status as "active" | "paused"),
+        input.personalityPresetId === undefined
+          ? current.personalityPresetId
+          : input.personalityPresetId,
+        input.memoryScope ?? current.memoryScope,
+        input.allowedTasks ?? current.allowedTasks,
+        input.approvalRules ?? current.approvalRules,
+      ],
+    );
+
+    return (await this.getAgentProfile(result.rows[0]!.id))!;
+  }
+
   async listMemoryEntries(companySlug: string, status = "draft"): Promise<MemoryEntryRecord[]> {
     const result = await this.pool.query<MemoryEntryRow>(
       `
@@ -239,7 +388,7 @@ export class CompanyOsRepository {
     const result = await this.pool.query<TaskRow>(
       `
         select t.id, t.company_id, t.project_slug, t.requested_by, t.goal, t.status,
-          t.priority, t.assigned_agent_recipe_id, t.context, t.expected_output,
+          t.priority, t.assigned_agent_recipe_id, t.agent_profile_id, t.context, t.expected_output,
           t.result_summary, t.created_at, t.updated_at
         from public.tasks t
         join public.companies c on c.id = t.company_id
@@ -257,7 +406,7 @@ export class CompanyOsRepository {
     const result = await this.pool.query<TaskRow>(
       `
         select id, company_id, project_slug, requested_by, goal, status,
-          priority, assigned_agent_recipe_id, context, expected_output,
+          priority, assigned_agent_recipe_id, agent_profile_id, context, expected_output,
           result_summary, created_at, updated_at
         from public.tasks
         where id = $1;
@@ -299,7 +448,7 @@ export class CompanyOsRepository {
 
       const result = await client.query<TaskRow>(`
         select id, company_id, project_slug, requested_by, goal, status,
-          priority, assigned_agent_recipe_id, context, expected_output,
+          priority, assigned_agent_recipe_id, agent_profile_id, context, expected_output,
           result_summary, created_at, updated_at
         from public.tasks
         where status = 'draft'
@@ -329,7 +478,7 @@ export class CompanyOsRepository {
           set status = 'running'
           where id = $1
           returning id, company_id, project_slug, requested_by, goal, status,
-            priority, assigned_agent_recipe_id, context, expected_output,
+            priority, assigned_agent_recipe_id, agent_profile_id, context, expected_output,
             result_summary, created_at, updated_at;
         `,
         [task.id],
@@ -366,7 +515,7 @@ export class CompanyOsRepository {
             result_summary = $2
           where id = $1
           returning id, company_id, project_slug, requested_by, goal, status,
-            priority, assigned_agent_recipe_id, context, expected_output,
+            priority, assigned_agent_recipe_id, agent_profile_id, context, expected_output,
             result_summary, created_at, updated_at;
         `,
         [input.taskId, input.resultSummary],
@@ -424,7 +573,7 @@ export class CompanyOsRepository {
           result_summary = $2
         where id = $1
         returning id, company_id, project_slug, requested_by, goal, status,
-          priority, assigned_agent_recipe_id, context, expected_output,
+          priority, assigned_agent_recipe_id, agent_profile_id, context, expected_output,
           result_summary, created_at, updated_at;
       `,
       [taskId, resultSummary],
@@ -447,13 +596,14 @@ export class CompanyOsRepository {
           goal,
           priority,
           context,
-          expected_output
+          expected_output,
+          agent_profile_id
         )
-        select c.id, $2, $3, $4, $5, $6::jsonb, $7
+        select c.id, $2, $3, $4, $5, $6::jsonb, $7, $8::uuid
         from public.companies c
         where c.slug = $1
         returning id, company_id, project_slug, requested_by, goal, status,
-          priority, assigned_agent_recipe_id, context, expected_output,
+          priority, assigned_agent_recipe_id, agent_profile_id, context, expected_output,
           result_summary, created_at, updated_at;
       `,
       [
@@ -464,6 +614,7 @@ export class CompanyOsRepository {
         input.priority ?? "normal",
         JSON.stringify(input.context ?? {}),
         input.expectedOutput ?? null,
+        input.agentProfileId ?? null,
       ],
     );
 
@@ -472,6 +623,55 @@ export class CompanyOsRepository {
     }
 
     return mapTaskRow(result.rows[0]);
+  }
+
+  async createTaskForAgent(input: CreateAgentTaskInput): Promise<TaskRecord> {
+    const agent = await this.getAgentProfile(input.agentProfileId);
+
+    if (!agent) {
+      throw new Error(`Agent profile not found: ${input.agentProfileId}`);
+    }
+
+    const result = await this.pool.query<TaskRow>(
+      `
+        insert into public.tasks (
+          company_id,
+          agent_profile_id,
+          requested_by,
+          goal,
+          priority,
+          context,
+          expected_output
+        )
+        values ($1, $2, $3, $4, $5, $6::jsonb, $7)
+        returning id, company_id, project_slug, requested_by, goal, status,
+          priority, assigned_agent_recipe_id, agent_profile_id, context, expected_output,
+          result_summary, created_at, updated_at;
+      `,
+      [
+        agent.companyId,
+        input.agentProfileId,
+        input.requestedBy,
+        input.goal,
+        input.priority ?? "normal",
+        JSON.stringify({
+          source: "agent-profile",
+          agent: {
+            id: agent.id,
+            name: agent.name,
+            department: agent.department,
+            personality: agent.personalityPreset?.name ?? null,
+            mission: agent.mission,
+            tone: agent.tone,
+            approvalRules: agent.approvalRules,
+          },
+          ...(input.context ?? {}),
+        }),
+        input.expectedOutput ?? null,
+      ],
+    );
+
+    return mapTaskRow(result.rows[0]!);
   }
 
   async listArtifacts(companySlug: string, taskId?: string): Promise<ArtifactRecord[]> {
@@ -525,11 +725,47 @@ interface TaskRow {
   status: string;
   priority: string;
   assigned_agent_recipe_id: string | null;
+  agent_profile_id: string | null;
   context: Record<string, unknown>;
   expected_output: string | null;
   result_summary: string | null;
   created_at: Date;
   updated_at: Date;
+}
+
+interface PersonalityPresetRow {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  tone: string;
+  behavior_notes: string;
+  created_at: Date;
+  updated_at: Date;
+}
+
+interface AgentProfileRow {
+  id: string;
+  company_id: string;
+  personality_preset_id: string | null;
+  slug: string;
+  name: string;
+  department: string;
+  mission: string;
+  tone: string | null;
+  status: string;
+  memory_scope: string;
+  allowed_tasks: string[];
+  approval_rules: string[];
+  created_at: Date;
+  updated_at: Date;
+  preset_slug: string | null;
+  preset_name: string | null;
+  preset_description: string | null;
+  preset_tone: string | null;
+  preset_behavior_notes: string | null;
+  preset_created_at: Date | null;
+  preset_updated_at: Date | null;
 }
 
 interface ArtifactRow {
@@ -583,9 +819,55 @@ function mapTaskRow(row: TaskRow): TaskRecord {
     status: row.status,
     priority: row.priority,
     assignedAgentRecipeId: row.assigned_agent_recipe_id,
+    agentProfileId: row.agent_profile_id,
     context: row.context,
     expectedOutput: row.expected_output,
     resultSummary: row.result_summary,
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString(),
+  };
+}
+
+function mapPersonalityPresetRow(row: PersonalityPresetRow): PersonalityPresetRecord {
+  return {
+    id: row.id,
+    slug: row.slug,
+    name: row.name,
+    description: row.description,
+    tone: row.tone,
+    behaviorNotes: row.behavior_notes,
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString(),
+  };
+}
+
+function mapAgentProfileRow(row: AgentProfileRow): AgentProfileRecord {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    personalityPresetId: row.personality_preset_id,
+    personalityPreset:
+      row.personality_preset_id && row.preset_slug
+        ? {
+            id: row.personality_preset_id,
+            slug: row.preset_slug,
+            name: row.preset_name ?? "",
+            description: row.preset_description ?? "",
+            tone: row.preset_tone ?? "",
+            behaviorNotes: row.preset_behavior_notes ?? "",
+            createdAt: row.preset_created_at?.toISOString() ?? "",
+            updatedAt: row.preset_updated_at?.toISOString() ?? "",
+          }
+        : null,
+    slug: row.slug,
+    name: row.name,
+    department: row.department,
+    mission: row.mission,
+    tone: row.tone,
+    status: row.status,
+    memoryScope: row.memory_scope,
+    allowedTasks: row.allowed_tasks ?? [],
+    approvalRules: row.approval_rules ?? [],
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };

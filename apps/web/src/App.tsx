@@ -12,6 +12,7 @@ import {
   Search,
   Server,
   Sparkles,
+  Users,
 } from "lucide-react";
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 
@@ -42,9 +43,34 @@ interface Task {
   status: string;
   priority: string;
   requestedBy: string;
+  agentProfileId: string | null;
   expectedOutput: string | null;
   resultSummary: string | null;
   createdAt: string;
+}
+
+interface PersonalityPreset {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  tone: string;
+  behaviorNotes: string;
+}
+
+interface AgentProfile {
+  id: string;
+  slug: string;
+  name: string;
+  department: string;
+  mission: string;
+  tone: string | null;
+  status: string;
+  memoryScope: string;
+  allowedTasks: string[];
+  approvalRules: string[];
+  personalityPresetId: string | null;
+  personalityPreset: PersonalityPreset | null;
 }
 
 interface Artifact {
@@ -78,6 +104,12 @@ const defaultTask = {
   priority: "normal",
 };
 
+const defaultAgentTask = {
+  goal: "",
+  expectedOutput: "A concise Markdown artifact ready for review.",
+  priority: "normal",
+};
+
 export function App() {
   const [ready, setReady] = useState<ReadyState | null>(null);
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -85,8 +117,12 @@ export function App() {
   const [memoryEntries, setMemoryEntries] = useState<MemoryEntry[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
+  const [agents, setAgents] = useState<AgentProfile[]>([]);
+  const [personalityPresets, setPersonalityPresets] = useState<PersonalityPreset[]>([]);
   const [selectedCompany, setSelectedCompany] = useState("mgwai-llc");
   const [taskForm, setTaskForm] = useState(defaultTask);
+  const [agentTaskForm, setAgentTaskForm] = useState(defaultAgentTask);
+  const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
   const [activeArtifactId, setActiveArtifactId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
@@ -95,6 +131,11 @@ export function App() {
   const activeArtifact = useMemo(
     () => artifacts.find((artifact) => artifact.id === activeArtifactId) ?? artifacts[0],
     [activeArtifactId, artifacts],
+  );
+
+  const activeAgent = useMemo(
+    () => agents.find((agent) => agent.id === activeAgentId) ?? agents[0],
+    [activeAgentId, agents],
   );
 
   const taskCounts = useMemo(
@@ -114,7 +155,16 @@ export function App() {
     setNotice(null);
 
     try {
-      const [readyResult, companiesResult, companyResult, memoryResult, tasksResult, artifactsResult] =
+      const [
+        readyResult,
+        companiesResult,
+        companyResult,
+        memoryResult,
+        tasksResult,
+        artifactsResult,
+        agentsResult,
+        presetsResult,
+      ] =
         await Promise.all([
           fetchJson<ReadyState>("/ready"),
           fetchJson<{ companies: Company[] }>("/companies"),
@@ -124,6 +174,8 @@ export function App() {
           ),
           fetchJson<{ tasks: Task[] }>(`/companies/${companySlug}/tasks`),
           fetchJson<{ artifacts: Artifact[] }>(`/companies/${companySlug}/artifacts`),
+          fetchJson<{ agents: AgentProfile[] }>(`/companies/${companySlug}/agents`),
+          fetchJson<{ personalityPresets: PersonalityPreset[] }>("/personality-presets"),
         ]);
 
       setReady(readyResult);
@@ -132,10 +184,17 @@ export function App() {
       setMemoryEntries(memoryResult.memoryEntries);
       setTasks(tasksResult.tasks);
       setArtifacts(artifactsResult.artifacts);
+      setAgents(agentsResult.agents);
+      setPersonalityPresets(presetsResult.personalityPresets);
       setActiveArtifactId((current) =>
         current && artifactsResult.artifacts.some((artifact) => artifact.id === current)
           ? current
           : artifactsResult.artifacts[0]?.id ?? null,
+      );
+      setActiveAgentId((current) =>
+        current && agentsResult.agents.some((agent) => agent.id === current)
+          ? current
+          : agentsResult.agents[0]?.id ?? null,
       );
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Unable to load dashboard.");
@@ -200,6 +259,69 @@ export function App() {
     }
   }
 
+  async function updateAgentPersonality(personalityPresetId: string) {
+    if (!activeAgent) {
+      return;
+    }
+
+    setWorking(true);
+    setNotice(null);
+
+    try {
+      await fetchJson(`/agents/${activeAgent.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          personalityPresetId,
+        }),
+      });
+      setNotice("Agent personality updated.");
+      await loadDashboard();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Unable to update agent.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function createAgentTask(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!activeAgent) {
+      setNotice("Select an agent first.");
+      return;
+    }
+
+    if (!agentTaskForm.goal.trim()) {
+      setNotice("Agent task goal is required.");
+      return;
+    }
+
+    setWorking(true);
+    setNotice(null);
+
+    try {
+      await fetchJson(`/agents/${activeAgent.id}/tasks`, {
+        method: "POST",
+        body: JSON.stringify({
+          requestedBy: "dashboard",
+          goal: agentTaskForm.goal,
+          priority: agentTaskForm.priority,
+          expectedOutput: agentTaskForm.expectedOutput,
+          context: {
+            source: "agent-console",
+          },
+        }),
+      });
+      setAgentTaskForm(defaultAgentTask);
+      setNotice(`Task created for ${activeAgent.name}.`);
+      await loadDashboard();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Unable to create agent task.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
   useEffect(() => {
     void loadDashboard(selectedCompany);
   }, [selectedCompany]);
@@ -221,6 +343,10 @@ export function App() {
           <a className="nav-item active" href="#tasks">
             <ClipboardList size={17} />
             Tasks
+          </a>
+          <a className="nav-item" href="#agents">
+            <Users size={17} />
+            Agents
           </a>
           <a className="nav-item" href="#memory">
             <Archive size={17} />
@@ -280,6 +406,137 @@ export function App() {
           <Metric icon={<Activity size={18} />} label="Running" value={taskCounts.running ?? 0} />
           <Metric icon={<CheckCircle2 size={18} />} label="Completed" value={taskCounts.completed ?? 0} />
           <Metric icon={<Archive size={18} />} label="Memory" value={memoryEntries.length} />
+          <Metric icon={<Users size={18} />} label="Agents" value={agents.length} />
+        </section>
+
+        <section className="panel agents-panel" id="agents">
+          <div className="panel-header">
+            <div>
+              <h2>Department Agents</h2>
+              <p>
+                Persistent department heads with selectable personalities. Worker agents are still spun
+                up per task.
+              </p>
+            </div>
+            <Users size={20} />
+          </div>
+
+          <div className="agents-layout">
+            <div className="agent-card-grid">
+              {agents.map((agent) => (
+                <button
+                  className={agent.id === activeAgent?.id ? "agent-card active" : "agent-card"}
+                  key={agent.id}
+                  type="button"
+                  onClick={() => setActiveAgentId(agent.id)}
+                >
+                  <span>{agent.department}</span>
+                  <strong>{agent.name}</strong>
+                  <small>{agent.personalityPreset?.name ?? "No personality"}</small>
+                </button>
+              ))}
+            </div>
+
+            <div className="agent-detail">
+              <div className="agent-heading">
+                <div>
+                  <h3>{activeAgent?.name ?? "No agent selected"}</h3>
+                  <p>{activeAgent?.mission ?? "Seed agent profiles to begin."}</p>
+                </div>
+                <span className="agent-status">{activeAgent?.status ?? "unknown"}</span>
+              </div>
+
+              {activeAgent ? (
+                <>
+                  <div className="agent-editor-grid">
+                    <label>
+                      Personality
+                      <select
+                        value={activeAgent.personalityPresetId ?? ""}
+                        onChange={(event) => updateAgentPersonality(event.target.value)}
+                        disabled={working}
+                      >
+                        {personalityPresets.map((preset) => (
+                          <option key={preset.id} value={preset.id}>
+                            {preset.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Tone
+                      <input value={activeAgent.tone ?? ""} readOnly />
+                    </label>
+                  </div>
+
+                  <div className="agent-rules">
+                    <div>
+                      <h4>Allowed Tasks</h4>
+                      <div className="chips">
+                        {activeAgent.allowedTasks.map((task) => (
+                          <span key={task}>{task}</span>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <h4>Approval Rules</h4>
+                      <ul>
+                        {activeAgent.approvalRules.map((rule) => (
+                          <li key={rule}>{rule}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+
+                  <form className="task-form agent-task-form" onSubmit={createAgentTask}>
+                    <label>
+                      Create task as {activeAgent.name}
+                      <textarea
+                        value={agentTaskForm.goal}
+                        onChange={(event) =>
+                          setAgentTaskForm({ ...agentTaskForm, goal: event.target.value })
+                        }
+                        placeholder="Draft a sales follow-up using this agent's personality and approval rules"
+                        rows={3}
+                      />
+                    </label>
+                    <div className="form-row">
+                      <label>
+                        Priority
+                        <select
+                          value={agentTaskForm.priority}
+                          onChange={(event) =>
+                            setAgentTaskForm({ ...agentTaskForm, priority: event.target.value })
+                          }
+                        >
+                          <option value="low">Low</option>
+                          <option value="normal">Normal</option>
+                          <option value="high">High</option>
+                          <option value="urgent">Urgent</option>
+                        </select>
+                      </label>
+                      <label>
+                        Output
+                        <input
+                          value={agentTaskForm.expectedOutput}
+                          onChange={(event) =>
+                            setAgentTaskForm({
+                              ...agentTaskForm,
+                              expectedOutput: event.target.value,
+                            })
+                          }
+                        />
+                      </label>
+                    </div>
+                    <button className="secondary-button" type="submit" disabled={working}>
+                      <Plus size={17} />
+                      Create Agent Task
+                    </button>
+                  </form>
+                </>
+              ) : null}
+            </div>
+          </div>
         </section>
 
         <section className="main-grid">

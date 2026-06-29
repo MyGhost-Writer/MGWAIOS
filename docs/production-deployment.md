@@ -65,12 +65,13 @@ http://127.0.0.1:5173
 
 Demo steps:
 
-1. Select `Eco Fit Insulation Demo` in the company selector.
-2. Open the Agents section.
-3. Select the Sales & Estimating Agent or Field Operations Agent.
-4. Use Simulation Chat to ask the agent for work.
-5. Review generated tasks and artifacts.
-6. Use Run Worker for draft tasks.
+1. Open the Ask page.
+2. Tell MGWAIOS what happened in plain English.
+3. Let the router infer the department, or mention one naturally such as sales, operations, customer, or strategy.
+4. Choose an output format only if you already know what you want.
+5. Say or type `call that a wrap`, or click Create Output.
+6. Review the generated output on the Output page.
+7. Use Advanced only when you need to inspect agents, memory, runtime, or task records.
 
 ## Safe Delete / Reset
 
@@ -145,7 +146,28 @@ OPENAI_API_KEY=
 OPENAI_MODEL=gpt-5.2
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_WEBHOOK_SECRET=
+DEFAULT_COMPANY_SLUG=eco-fit-insulation-demo
 ```
+
+Telegram webhook endpoint:
+
+```text
+POST https://your-api-service-url/telegram/webhook
+```
+
+After the API is publicly reachable, register the webhook with Telegram:
+
+```powershell
+$env:TELEGRAM_BOT_TOKEN="your-token"
+$env:TELEGRAM_WEBHOOK_SECRET="your-random-secret"
+$body = @{
+  url = "https://your-api-service-url/telegram/webhook"
+  secret_token = $env:TELEGRAM_WEBHOOK_SECRET
+} | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri "https://api.telegram.org/bot$env:TELEGRAM_BOT_TOKEN/setWebhook" -ContentType "application/json" -Body $body
+```
+
+The local API can show `hasBotToken: true`, but Telegram still cannot reach it until the API has a public HTTPS URL and the webhook is registered.
 
 ### Web Component
 
@@ -171,6 +193,7 @@ Environment variables:
 
 ```env
 VITE_API_BASE_URL=https://your-api-service-url
+VITE_DEFAULT_COMPANY_SLUG=eco-fit-insulation-demo
 ```
 
 ## Domain Setup

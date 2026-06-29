@@ -11,7 +11,6 @@ import {
   MicOff,
   RefreshCw,
   Send,
-  Settings2,
   Sparkles,
   Wand2,
 } from "lucide-react";
@@ -87,6 +86,7 @@ interface ReadyState {
   };
   telegram: {
     hasBotToken: boolean;
+    hasWebhookSecret?: boolean;
   };
   openai: {
     hasApiKey: boolean;
@@ -151,10 +151,10 @@ export function App() {
     [activeArtifactId, artifacts],
   );
 
-  const activeAgent = useMemo(
-    () => agents.find((agent) => agent.id === activeAgentId) ?? agents[0] ?? null,
-    [activeAgentId, agents],
-  );
+  const activeAgent = useMemo(() => agents.find((agent) => agent.id === activeAgentId) ?? null, [
+    activeAgentId,
+    agents,
+  ]);
 
   const operatorMessages = useMemo(
     () => conversation.filter((message) => message.role === "operator"),
@@ -211,7 +211,7 @@ export function App() {
       setActiveAgentId((current) =>
         current && agentsResult.agents.some((agent) => agent.id === current)
           ? current
-          : chooseAgent(agentsResult.agents, "sales")?.id ?? agentsResult.agents[0]?.id ?? null,
+          : null,
       );
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Unable to load MGWAIOS.");
@@ -253,7 +253,7 @@ export function App() {
     setDraft("");
 
     if (shouldWrap) {
-      void createOutput(nextConversation);
+      void createOutput(nextConversation, inferredAgent);
       return;
     }
 
@@ -267,8 +267,19 @@ export function App() {
     ]);
   }
 
-  async function createOutput(sourceConversation = conversation) {
-    if (!activeAgent) {
+  async function createOutput(sourceConversation = conversation, routedAgent?: AgentProfile | null) {
+    const targetAgent =
+      routedAgent ??
+      activeAgent ??
+      inferAgentFromText(
+        agents,
+        sourceConversation.map((message) => message.content).join(" "),
+      ) ??
+      chooseAgent(agents, "strategy") ??
+      agents[0] ??
+      null;
+
+    if (!targetAgent) {
       setNotice("MGWAIOS is still loading the company agents.");
       return;
     }
@@ -288,8 +299,8 @@ export function App() {
     try {
       const transcript = [
         `Company: ${company?.name ?? selectedCompany}`,
-        `Selected department: ${activeAgent.department}`,
-        `Selected agent: ${activeAgent.name}`,
+        `Selected department: ${targetAgent.department}`,
+        `Selected agent: ${targetAgent.name}`,
         `Research requested: ${researchMode ? "yes" : "no"}`,
         `Output preference: ${outputFormat}`,
         "",
@@ -300,7 +311,7 @@ export function App() {
       ].join("\n");
 
       const result = await fetchJson<{ messages: ChatMessage[]; worker: { summary?: string; error?: string } }>(
-        `/agents/${activeAgent.id}/simulations`,
+        `/agents/${targetAgent.id}/simulations`,
         {
           method: "POST",
           body: JSON.stringify({
@@ -485,9 +496,9 @@ function AskPage(props: {
         <div className="conversation-strip">
           <span>
             <Bot size={16} />
-            {props.activeAgent?.department ?? "Department"} assistant
+            {props.activeAgent ? `${props.activeAgent.department} assistant` : "Router assistant"}
           </span>
-          <strong>{props.activeAgent?.name ?? "Loading..."}</strong>
+          <strong>{props.activeAgent?.name ?? "MGWAIOS Router"}</strong>
         </div>
 
         <div className="simple-chat" aria-label="Conversation">
@@ -511,7 +522,7 @@ function AskPage(props: {
           <textarea
             value={props.draft}
             onChange={(event) => props.onDraftChange(event.target.value)}
-            placeholder="Example: Hey Eco Sales, a customer called about..."
+            placeholder="Example: A customer called about..."
             rows={3}
             onKeyDown={(event) => {
               if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
@@ -658,6 +669,17 @@ function AdvancedPage(props: {
           icon={<CheckCircle2 size={18} />}
           label="OpenAI"
           value={props.ready?.openai.hasApiKey ? "Ready" : "Missing"}
+        />
+        <StatusCard
+          icon={<Bot size={18} />}
+          label="Telegram"
+          value={
+            props.ready?.telegram.hasBotToken
+              ? props.ready.telegram.hasWebhookSecret
+                ? "Ready"
+                : "Token only"
+              : "Missing"
+          }
         />
         <StatusCard
           icon={<Archive size={18} />}

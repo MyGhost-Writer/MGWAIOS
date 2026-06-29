@@ -76,6 +76,26 @@ const sessionParamsSchema = z.object({
   id: z.string().uuid(),
 });
 
+const telegramUpdateSchema = z.object({
+  update_id: z.number(),
+  message: z
+    .object({
+      message_id: z.number(),
+      text: z.string().optional(),
+      chat: z.object({
+        id: z.number(),
+      }),
+      from: z
+        .object({
+          id: z.number().optional(),
+          username: z.string().optional(),
+          first_name: z.string().optional(),
+        })
+        .optional(),
+    })
+    .optional(),
+});
+
 const app = Fastify({
   logger: true,
 });
@@ -99,6 +119,106 @@ app.get("/ready", async () => {
     },
     openai: {
       hasApiKey: Boolean(process.env.OPENAI_API_KEY),
+    },
+  };
+});
+
+app.post("/telegram/webhook", async (request, reply) => {
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
+
+  if (!botToken) {
+    return reply.code(503).send({
+      error: "missing_telegram_bot_token",
+      message: "TELEGRAM_BOT_TOKEN is required to receive Telegram updates.",
+    });
+  }
+
+  if (webhookSecret) {
+    const incomingSecret = request.headers["x-telegram-bot-api-secret-token"];
+
+    if (incomingSecret !== webhookSecret) {
+      return reply.code(401).send({
+        error: "invalid_telegram_secret",
+        message: "Telegram webhook secret token did not match.",
+      });
+    }
+  }
+
+  const update = telegramUpdateSchema.parse(request.body);
+  const chatId = update.message?.chat.id;
+  const text = update.message?.text?.trim();
+
+  if (!update.message || !chatId || !text) {
+    return { ok: true, ignored: true };
+  }
+
+  const telegramMessage = update.message;
+
+  const openAiApiKey = process.env.OPENAI_API_KEY;
+
+  if (!openAiApiKey) {
+    await sendTelegramMessage(botToken, chatId, "MGWAIOS is missing OPENAI_API_KEY.");
+    return { ok: true, error: "missing_openai_api_key" };
+  }
+
+  const companySlug = process.env.DEFAULT_COMPANY_SLUG ?? "eco-fit-insulation-demo";
+  const agents = await repository.listAgentProfiles(companySlug);
+  const agent = inferAgentFromText(agents, text) ?? chooseAgent(agents, "strategy") ?? agents[0];
+
+  if (!agent) {
+    await sendTelegramMessage(botToken, chatId, `MGWAIOS could not find agents for ${companySlug}.`);
+    return { ok: true, error: "missing_agent_profiles" };
+  }
+
+  const requester =
+    telegramMessage.from?.username ??
+    telegramMessage.from?.first_name ??
+    `telegram:${telegramMessage.from?.id ?? chatId}`;
+  const format = inferOutputFormat(text);
+  const task = await repository.createTaskForAgent({
+    agentProfileId: agent.id,
+    requestedBy: requester,
+    goal: [
+      `Telegram request from ${requester}`,
+      `Company: ${companySlug}`,
+      `Selected department: ${agent.department}`,
+      "",
+      text,
+    ].join("\n"),
+    priority: "normal",
+    expectedOutput: describeFormat(format),
+    context: {
+      source: "telegram",
+      telegramChatId: chatId,
+      telegramMessageId: telegramMessage.message_id,
+      outputFormat: format,
+    },
+  });
+
+  const run = await runTaskById(repository, task.id, {
+    apiKey: openAiApiKey,
+    model: process.env.OPENAI_MODEL ?? "gpt-5.2",
+  });
+
+  const replyText =
+    run.status === "completed"
+      ? formatTelegramReply(agent.name, run.summary ?? "I created the requested output.")
+      : `I could not complete that yet: ${run.error ?? run.status}`;
+
+  await sendTelegramMessage(botToken, chatId, replyText);
+
+  return {
+    ok: true,
+    taskId: task.id,
+    agent: {
+      id: agent.id,
+      name: agent.name,
+      department: agent.department,
+    },
+    worker: {
+      status: run.status,
+      artifactId: run.artifactId,
     },
   };
 });
@@ -507,6 +627,69 @@ function extractFileContent(format: string, bodyMarkdown: string): string {
   }
 
   return bodyMarkdown;
+}
+
+function chooseAgent<TAgent extends { department: string }>(
+  agents: TAgent[],
+  department: string,
+): TAgent | undefined {
+  return agents.find((agent) => agent.department.toLowerCase().includes(department));
+}
+
+function inferAgentFromText<TAgent extends { department: string }>(
+  agents: TAgent[],
+  text: string,
+): TAgent | undefined {
+  const clean = text.toLowerCase();
+
+  if (clean.includes("sales") || clean.includes("estimate") || clean.includes("lead")) {
+    return chooseAgent(agents, "sales");
+  }
+
+  if (clean.includes("schedule") || clean.includes("job") || clean.includes("crew")) {
+    return chooseAgent(agents, "operations");
+  }
+
+  if (clean.includes("customer") || clean.includes("review") || clean.includes("follow up")) {
+    return chooseAgent(agents, "customer");
+  }
+
+  if (clean.includes("owner") || clean.includes("strategy") || clean.includes("business")) {
+    return chooseAgent(agents, "strategy");
+  }
+
+  return undefined;
+}
+
+function formatTelegramReply(agentName: string, summary: string): string {
+  const cleanSummary = summary.replace(/\s+/g, " ").trim();
+  const safeSummary =
+    cleanSummary.length > 1200 ? `${cleanSummary.slice(0, 1197)}...` : cleanSummary;
+
+  return `${agentName} handled that.\n\n${safeSummary}\n\nOpen MGWAIOS to review the saved artifact.`;
+}
+
+async function sendTelegramMessage(
+  botToken: string,
+  chatId: number,
+  text: string,
+): Promise<void> {
+  const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text,
+      disable_web_page_preview: true,
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Telegram sendMessage failed: ${response.status} ${body}`);
+  }
 }
 
 try {

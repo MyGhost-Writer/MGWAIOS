@@ -46,6 +46,15 @@ export interface RunNextTaskResult {
   error?: string;
 }
 
+export interface RunTaskResult {
+  status: "completed" | "failed" | "not_found";
+  taskId: string;
+  artifactId?: string;
+  summary?: string;
+  error?: string;
+  bodyMarkdown?: string;
+}
+
 export async function runTaskAgent(
   input: AgentRunInput,
   config: AgentRunnerConfig,
@@ -106,6 +115,58 @@ export async function runNextTask(
       taskId: result.task.id,
       artifactId: result.artifact.id,
       summary: result.task.resultSummary ?? undefined,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown worker error.";
+    await repository.failTask(task.id, message);
+
+    return {
+      status: "failed",
+      taskId: task.id,
+      error: message,
+    };
+  }
+}
+
+export async function runTaskById(
+  repository: CompanyOsRepository,
+  taskId: string,
+  config: AgentRunnerConfig,
+): Promise<RunTaskResult> {
+  const task = await repository.claimTaskById(taskId);
+
+  if (!task) {
+    return {
+      status: "not_found",
+      taskId,
+      error: "Task was not found or is not runnable.",
+    };
+  }
+
+  try {
+    const memoryEntries = await repository.listTaskMemory(task.id);
+    const output = await runTaskAgent(
+      {
+        task,
+        memoryEntries,
+      },
+      config,
+    );
+
+    const result = await repository.completeTaskWithArtifact({
+      taskId: task.id,
+      title: output.title,
+      bodyMarkdown: output.bodyMarkdown,
+      resultSummary: output.resultSummary,
+      reviewStatus: "draft",
+    });
+
+    return {
+      status: "completed",
+      taskId: result.task.id,
+      artifactId: result.artifact.id,
+      summary: result.task.resultSummary ?? undefined,
+      bodyMarkdown: result.artifact.bodyMarkdown ?? undefined,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown worker error.";

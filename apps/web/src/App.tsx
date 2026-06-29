@@ -73,6 +73,15 @@ interface AgentProfile {
   personalityPreset: PersonalityPreset | null;
 }
 
+interface ChatMessage {
+  id: string;
+  role: "user" | "agent" | "system" | "worker";
+  content: string;
+  taskId: string | null;
+  artifactId: string | null;
+  createdAt: string;
+}
+
 interface Artifact {
   id: string;
   taskId: string | null;
@@ -110,6 +119,11 @@ const defaultAgentTask = {
   priority: "normal",
 };
 
+const defaultSimulation = {
+  message: "",
+  expectedOutput: "",
+};
+
 export function App() {
   const [ready, setReady] = useState<ReadyState | null>(null);
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -122,6 +136,8 @@ export function App() {
   const [selectedCompany, setSelectedCompany] = useState("mgwai-llc");
   const [taskForm, setTaskForm] = useState(defaultTask);
   const [agentTaskForm, setAgentTaskForm] = useState(defaultAgentTask);
+  const [simulationForm, setSimulationForm] = useState(defaultSimulation);
+  const [simulationMessages, setSimulationMessages] = useState<ChatMessage[]>([]);
   const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
   const [activeArtifactId, setActiveArtifactId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -317,6 +333,46 @@ export function App() {
       await loadDashboard();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Unable to create agent task.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function runSimulation(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!activeAgent) {
+      setNotice("Select an agent first.");
+      return;
+    }
+
+    if (!simulationForm.message.trim()) {
+      setNotice("Simulation message is required.");
+      return;
+    }
+
+    setWorking(true);
+    setNotice(null);
+
+    try {
+      const result = await fetchJson<{ messages: ChatMessage[]; worker: { summary?: string; error?: string } }>(
+        `/agents/${activeAgent.id}/simulations`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            requester: "dashboard",
+            message: simulationForm.message,
+            expectedOutput: simulationForm.expectedOutput || undefined,
+          }),
+        },
+      );
+
+      setSimulationMessages(result.messages);
+      setSimulationForm(defaultSimulation);
+      setNotice(result.worker.error ?? result.worker.summary ?? "Simulation completed.");
+      await loadDashboard();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Unable to run simulation.");
     } finally {
       setWorking(false);
     }
@@ -532,6 +588,53 @@ export function App() {
                       <Plus size={17} />
                       Create Agent Task
                     </button>
+                  </form>
+
+                  <form className="simulation-console" onSubmit={runSimulation}>
+                    <div className="panel-header compact">
+                      <h4>Simulation Chat</h4>
+                      <Bot size={18} />
+                    </div>
+                    <label>
+                      Message {activeAgent.name}
+                      <textarea
+                        value={simulationForm.message}
+                        onChange={(event) =>
+                          setSimulationForm({ ...simulationForm, message: event.target.value })
+                        }
+                        placeholder="Engineer, design a safe onboarding workflow and produce the best artifact format."
+                        rows={4}
+                      />
+                    </label>
+                    <label>
+                      Optional output guidance
+                      <input
+                        value={simulationForm.expectedOutput}
+                        onChange={(event) =>
+                          setSimulationForm({
+                            ...simulationForm,
+                            expectedOutput: event.target.value,
+                          })
+                        }
+                        placeholder="Markdown brief, JSON schema, CSV table, HTML draft"
+                      />
+                    </label>
+                    <button className="primary-button" type="submit" disabled={working}>
+                      {working ? <Loader2 className="spin" size={17} /> : <Play size={17} />}
+                      Run Simulation
+                    </button>
+
+                    {simulationMessages.length > 0 ? (
+                      <div className="chat-transcript">
+                        {simulationMessages.map((message) => (
+                          <article className={`chat-message ${message.role}`} key={message.id}>
+                            <span>{message.role}</span>
+                            <p>{message.content}</p>
+                            {message.artifactId ? <small>Artifact saved</small> : null}
+                          </article>
+                        ))}
+                      </div>
+                    ) : null}
                   </form>
                 </>
               ) : null}

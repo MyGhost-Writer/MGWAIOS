@@ -113,6 +113,40 @@ export interface ArtifactRecord {
   updatedAt: string;
 }
 
+export interface ArtifactFileRecord {
+  id: string;
+  artifactId: string;
+  fileName: string;
+  format: string;
+  mimeType: string;
+  storageBucket: string | null;
+  storagePath: string | null;
+  contentText: string | null;
+  createdAt: string;
+}
+
+export interface AgentChatSessionRecord {
+  id: string;
+  companyId: string;
+  agentProfileId: string;
+  requester: string;
+  title: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentChatMessageRecord {
+  id: string;
+  sessionId: string;
+  role: "user" | "agent" | "system" | "worker";
+  content: string;
+  taskId: string | null;
+  artifactId: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
 export interface CreateMemoryEntryInput {
   companySlug: string;
   category: string;
@@ -152,6 +186,31 @@ export interface CreateAgentTaskInput {
   priority?: "low" | "normal" | "high" | "urgent";
   expectedOutput?: string;
   context?: Record<string, unknown>;
+}
+
+export interface CreateChatSessionInput {
+  agentProfileId: string;
+  requester: string;
+  title: string;
+}
+
+export interface CreateChatMessageInput {
+  sessionId: string;
+  role: "user" | "agent" | "system" | "worker";
+  content: string;
+  taskId?: string;
+  artifactId?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface CreateArtifactFileInput {
+  artifactId: string;
+  fileName: string;
+  format: string;
+  mimeType: string;
+  storageBucket?: string;
+  storagePath?: string;
+  contentText?: string;
 }
 
 export function readDatabaseConfig(env: NodeJS.ProcessEnv = process.env): DatabaseConfig {
@@ -440,6 +499,23 @@ export class CompanyOsRepository {
     return result.rows.map(mapMemoryEntryRow);
   }
 
+  async claimTaskById(taskId: string): Promise<TaskRecord | null> {
+    const result = await this.pool.query<TaskRow>(
+      `
+        update public.tasks
+        set status = 'running'
+        where id = $1
+          and status in ('draft', 'failed')
+        returning id, company_id, project_slug, requested_by, goal, status,
+          priority, assigned_agent_recipe_id, agent_profile_id, context, expected_output,
+          result_summary, created_at, updated_at;
+      `,
+      [taskId],
+    );
+
+    return result.rows[0] ? mapTaskRow(result.rows[0]) : null;
+  }
+
   async claimNextDraftTask(): Promise<TaskRecord | null> {
     const client = await this.pool.connect();
 
@@ -690,6 +766,143 @@ export class CompanyOsRepository {
 
     return result.rows.map(mapArtifactRow);
   }
+
+  async createArtifactFile(input: CreateArtifactFileInput): Promise<ArtifactFileRecord> {
+    const result = await this.pool.query<ArtifactFileRow>(
+      `
+        insert into public.artifact_files (
+          artifact_id,
+          file_name,
+          format,
+          mime_type,
+          storage_bucket,
+          storage_path,
+          content_text
+        )
+        values ($1, $2, $3, $4, $5, $6, $7)
+        returning id, artifact_id, file_name, format, mime_type, storage_bucket,
+          storage_path, content_text, created_at;
+      `,
+      [
+        input.artifactId,
+        input.fileName,
+        input.format,
+        input.mimeType,
+        input.storageBucket ?? null,
+        input.storagePath ?? null,
+        input.contentText ?? null,
+      ],
+    );
+
+    return mapArtifactFileRow(result.rows[0]!);
+  }
+
+  async listArtifactFiles(artifactId: string): Promise<ArtifactFileRecord[]> {
+    const result = await this.pool.query<ArtifactFileRow>(
+      `
+        select id, artifact_id, file_name, format, mime_type, storage_bucket,
+          storage_path, content_text, created_at
+        from public.artifact_files
+        where artifact_id = $1
+        order by created_at desc;
+      `,
+      [artifactId],
+    );
+
+    return result.rows.map(mapArtifactFileRow);
+  }
+
+  async createChatSession(input: CreateChatSessionInput): Promise<AgentChatSessionRecord> {
+    const agent = await this.getAgentProfile(input.agentProfileId);
+
+    if (!agent) {
+      throw new Error(`Agent profile not found: ${input.agentProfileId}`);
+    }
+
+    const result = await this.pool.query<AgentChatSessionRow>(
+      `
+        insert into public.agent_chat_sessions (
+          company_id,
+          agent_profile_id,
+          requester,
+          title
+        )
+        values ($1, $2, $3, $4)
+        returning id, company_id, agent_profile_id, requester, title, status, created_at, updated_at;
+      `,
+      [agent.companyId, input.agentProfileId, input.requester, input.title],
+    );
+
+    return mapAgentChatSessionRow(result.rows[0]!);
+  }
+
+  async listChatSessions(agentProfileId: string): Promise<AgentChatSessionRecord[]> {
+    const result = await this.pool.query<AgentChatSessionRow>(
+      `
+        select id, company_id, agent_profile_id, requester, title, status, created_at, updated_at
+        from public.agent_chat_sessions
+        where agent_profile_id = $1
+        order by created_at desc;
+      `,
+      [agentProfileId],
+    );
+
+    return result.rows.map(mapAgentChatSessionRow);
+  }
+
+  async getChatSession(sessionId: string): Promise<AgentChatSessionRecord | null> {
+    const result = await this.pool.query<AgentChatSessionRow>(
+      `
+        select id, company_id, agent_profile_id, requester, title, status, created_at, updated_at
+        from public.agent_chat_sessions
+        where id = $1;
+      `,
+      [sessionId],
+    );
+
+    return result.rows[0] ? mapAgentChatSessionRow(result.rows[0]) : null;
+  }
+
+  async createChatMessage(input: CreateChatMessageInput): Promise<AgentChatMessageRecord> {
+    const result = await this.pool.query<AgentChatMessageRow>(
+      `
+        insert into public.agent_chat_messages (
+          session_id,
+          role,
+          content,
+          task_id,
+          artifact_id,
+          metadata
+        )
+        values ($1, $2, $3, $4, $5, $6::jsonb)
+        returning id, session_id, role, content, task_id, artifact_id, metadata, created_at;
+      `,
+      [
+        input.sessionId,
+        input.role,
+        input.content,
+        input.taskId ?? null,
+        input.artifactId ?? null,
+        JSON.stringify(input.metadata ?? {}),
+      ],
+    );
+
+    return mapAgentChatMessageRow(result.rows[0]!);
+  }
+
+  async listChatMessages(sessionId: string): Promise<AgentChatMessageRecord[]> {
+    const result = await this.pool.query<AgentChatMessageRow>(
+      `
+        select id, session_id, role, content, task_id, artifact_id, metadata, created_at
+        from public.agent_chat_messages
+        where session_id = $1
+        order by created_at;
+      `,
+      [sessionId],
+    );
+
+    return result.rows.map(mapAgentChatMessageRow);
+  }
 }
 
 interface CompanyRow {
@@ -779,6 +992,40 @@ interface ArtifactRow {
   review_status: string;
   created_at: Date;
   updated_at: Date;
+}
+
+interface ArtifactFileRow {
+  id: string;
+  artifact_id: string;
+  file_name: string;
+  format: string;
+  mime_type: string;
+  storage_bucket: string | null;
+  storage_path: string | null;
+  content_text: string | null;
+  created_at: Date;
+}
+
+interface AgentChatSessionRow {
+  id: string;
+  company_id: string;
+  agent_profile_id: string;
+  requester: string;
+  title: string;
+  status: string;
+  created_at: Date;
+  updated_at: Date;
+}
+
+interface AgentChatMessageRow {
+  id: string;
+  session_id: string;
+  role: "user" | "agent" | "system" | "worker";
+  content: string;
+  task_id: string | null;
+  artifact_id: string | null;
+  metadata: Record<string, unknown>;
+  created_at: Date;
 }
 
 function mapCompanyRow(row: CompanyRow): CompanyRecord {
@@ -885,5 +1132,45 @@ function mapArtifactRow(row: ArtifactRow): ArtifactRecord {
     reviewStatus: row.review_status,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
+  };
+}
+
+function mapArtifactFileRow(row: ArtifactFileRow): ArtifactFileRecord {
+  return {
+    id: row.id,
+    artifactId: row.artifact_id,
+    fileName: row.file_name,
+    format: row.format,
+    mimeType: row.mime_type,
+    storageBucket: row.storage_bucket,
+    storagePath: row.storage_path,
+    contentText: row.content_text,
+    createdAt: row.created_at.toISOString(),
+  };
+}
+
+function mapAgentChatSessionRow(row: AgentChatSessionRow): AgentChatSessionRecord {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    agentProfileId: row.agent_profile_id,
+    requester: row.requester,
+    title: row.title,
+    status: row.status,
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString(),
+  };
+}
+
+function mapAgentChatMessageRow(row: AgentChatMessageRow): AgentChatMessageRecord {
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    role: row.role,
+    content: row.content,
+    taskId: row.task_id,
+    artifactId: row.artifact_id,
+    metadata: row.metadata,
+    createdAt: row.created_at.toISOString(),
   };
 }

@@ -1,0 +1,98 @@
+.output-page {
+  display: grid;
+  gap: 18px;
+}
+
+.output-header,
+.advanced-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: end;
+}
+
+.output-header p,
+.advanced-header p {
+  color: var(--accent);
+  font-weight: 900;
+  margin-bottom: 6px;
+}
+
+.output-header h1,
+.advanced-header h1 {
+  font-size: clamp(30px, 4vw, 48px);
+  line-height: 1;
+}
+
+.output-layout {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 16px;
+}
+
+.output-list,
+.output-document,
+.run-log {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.output-list {
+  padding: 10px;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.output-list button {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfb;
+  color: var(--ink);
+  padding: 12px;
+  display: grid;
+  gap: 6px;
+  text-align: left;
+}
+
+.output-list span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.output-document {
+  min-height: 560px;
+  padding: 26px;
+}
+
+.output-document pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  color: var(--ink);
+  font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.run-log {
+  padding: 18px;
+}
+
+.run-log article {
+  border-top: 1px solid var(--line);
+  padding: 12px 0;
+}
+
+.run-log article:first-of-type {
+  border-top: 0;
+}
+
+@media (max-width: 860px) {
+  .output-layout {
+    grid-template-columns: 1fr;
+  }
+}

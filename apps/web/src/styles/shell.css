@@ -1,0 +1,139 @@
+.app-frame {
+  min-height: 100vh;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 80%), rgb(247 247 244 / 92%)),
+    radial-gradient(circle at top left, rgb(22 110 91 / 12%), transparent 32rem);
+}
+
+.app-top {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 18px;
+  align-items: center;
+  padding: 16px 28px;
+  border-bottom: 1px solid rgb(220 226 222 / 78%);
+  background: rgb(247 247 244 / 86%);
+  backdrop-filter: blur(14px);
+}
+
+.brand-button {
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0;
+  font-weight: 900;
+}
+
+.brand-button span {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--accent);
+  color: white;
+}
+
+.top-nav {
+  justify-self: center;
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.top-nav button {
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  min-height: 34px;
+  padding: 0 16px;
+  font-weight: 800;
+}
+
+.top-nav button.active {
+  background: var(--ink);
+  color: #fff;
+}
+
+.company-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 240px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--muted);
+}
+
+.company-pill select {
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.page-shell {
+  width: min(1180px, calc(100vw - 40px));
+  margin: 0 auto;
+  padding: 34px 0 60px;
+}
+
+.toast {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  z-index: 30;
+  max-width: min(460px, calc(100vw - 40px));
+  border: 1px solid #ead2bb;
+  border-left: 4px solid var(--warn);
+  border-radius: 8px;
+  background: #fff8ef;
+  color: #4a321c;
+  padding: 12px 14px;
+  box-shadow: var(--shadow);
+}
+
+.ghost-button {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  font-weight: 800;
+}
+
+@media (max-width: 760px) {
+  .app-top {
+    grid-template-columns: 1fr;
+  }
+
+  .top-nav {
+    justify-self: stretch;
+    width: 100%;
+  }
+
+  .top-nav button {
+    flex: 1;
+  }
+
+  .company-pill {
+    width: 100%;
+  }
+}

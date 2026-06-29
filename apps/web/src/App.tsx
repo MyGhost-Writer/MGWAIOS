@@ -1,18 +1,23 @@
 import {
   Activity,
   Archive,
+  ArrowRight,
   Bot,
   CheckCircle2,
   ClipboardList,
   FileText,
   Loader2,
+  Mic,
+  MicOff,
   Play,
   Plus,
   RefreshCw,
   Search,
+  Send,
   Server,
   Sparkles,
   Users,
+  Wand2,
 } from "lucide-react";
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 
@@ -124,6 +129,12 @@ const defaultSimulation = {
   expectedOutput: "",
 };
 
+interface LocalConversationMessage {
+  id: string;
+  role: "operator" | "agent";
+  content: string;
+}
+
 export function App() {
   const [ready, setReady] = useState<ReadyState | null>(null);
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -133,11 +144,17 @@ export function App() {
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [agents, setAgents] = useState<AgentProfile[]>([]);
   const [personalityPresets, setPersonalityPresets] = useState<PersonalityPreset[]>([]);
-  const [selectedCompany, setSelectedCompany] = useState("mgwai-llc");
+  const [selectedCompany, setSelectedCompany] = useState(
+    import.meta.env.VITE_DEFAULT_COMPANY_SLUG ?? "eco-fit-insulation-demo",
+  );
   const [taskForm, setTaskForm] = useState(defaultTask);
   const [agentTaskForm, setAgentTaskForm] = useState(defaultAgentTask);
   const [simulationForm, setSimulationForm] = useState(defaultSimulation);
   const [simulationMessages, setSimulationMessages] = useState<ChatMessage[]>([]);
+  const [operatorDraft, setOperatorDraft] = useState("");
+  const [conversationMessages, setConversationMessages] = useState<LocalConversationMessage[]>([]);
+  const [isListening, setIsListening] = useState(false);
+  const [workflowStage, setWorkflowStage] = useState<"agent" | "talk" | "artifact">("talk");
   const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
   const [activeArtifactId, setActiveArtifactId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -165,6 +182,34 @@ export function App() {
       ),
     [tasks],
   );
+
+  const conversationPreview = useMemo(() => {
+    if (!activeAgent || conversationMessages.length === 0) {
+      return "";
+    }
+
+    return [
+      `Company: ${company?.name ?? selectedCompany}`,
+      `Department agent: ${activeAgent.name}`,
+      `Agent mission: ${activeAgent.mission}`,
+      "",
+      "Operator conversation:",
+      ...conversationMessages.map((message) => `${message.role}: ${message.content}`),
+      "",
+      "Create the most useful artifact for this situation. Use approved company memory, respect approval rules, and choose the best format unless the operator asked for a specific one.",
+    ].join("\n");
+  }, [activeAgent, company?.name, conversationMessages, selectedCompany]);
+
+  const agentCallsign = useMemo(() => {
+    if (!activeAgent) {
+      return "Hey agent";
+    }
+
+    const companyWord = company?.name.toLowerCase().includes("eco") ? "Eco" : "Company";
+    const departmentWord = activeAgent.department.split(/\s+/)[0] ?? activeAgent.department;
+
+    return `Hey ${companyWord} ${departmentWord}`;
+  }, [activeAgent, company?.name]);
 
   async function loadDashboard(companySlug = selectedCompany) {
     setLoading(true);
@@ -210,7 +255,10 @@ export function App() {
       setActiveAgentId((current) =>
         current && agentsResult.agents.some((agent) => agent.id === current)
           ? current
-          : agentsResult.agents[0]?.id ?? null,
+          : agentsResult.agents.find((agent) => agent.department.toLowerCase().includes("sales"))
+              ?.id ??
+            agentsResult.agents[0]?.id ??
+            null,
       );
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Unable to load dashboard.");
@@ -378,6 +426,148 @@ export function App() {
     }
   }
 
+  function addOperatorMessage(content: string) {
+    const clean = content.trim();
+
+    if (!clean) {
+      return;
+    }
+
+    const { message, shouldWrap } = splitWrapCommand(clean);
+
+    if (message) {
+      setConversationMessages((current) => [
+        ...current,
+        {
+          id: crypto.randomUUID(),
+          role: "operator",
+          content: message,
+        },
+      ]);
+    }
+
+    setOperatorDraft("");
+    setWorkflowStage("talk");
+
+    if (shouldWrap) {
+      void runConversationSimulation(message);
+      return;
+    }
+
+    if (activeAgent) {
+      setConversationMessages((current) => [
+        ...current,
+        {
+          id: crypto.randomUUID(),
+          role: "agent",
+          content: `Got it. I am holding that context for ${activeAgent.department}. Add anything else, then say "call that a wrap" when you want me to create the artifact.`,
+        },
+      ]);
+    }
+  }
+
+  async function runConversationSimulation(finalMessage?: string) {
+    if (!activeAgent) {
+      setNotice("Select an agent first.");
+      return;
+    }
+
+    const messages = finalMessage?.trim()
+      ? [
+          ...conversationMessages,
+          {
+            id: crypto.randomUUID(),
+            role: "operator" as const,
+            content: finalMessage.trim(),
+          },
+        ]
+      : conversationMessages;
+
+    if (messages.filter((message) => message.role === "operator").length === 0) {
+      setNotice("Tell the agent the story first.");
+      return;
+    }
+
+    setWorking(true);
+    setNotice(null);
+
+    try {
+      const transcript = [
+        `Company: ${company?.name ?? selectedCompany}`,
+        `Department agent: ${activeAgent.name}`,
+        `Agent mission: ${activeAgent.mission}`,
+        `Agent approval rules: ${activeAgent.approvalRules.join("; ") || "None listed"}`,
+        "",
+        "Operator conversation:",
+        ...messages.map((message) => `${message.role}: ${message.content}`),
+        "",
+        "Instruction: Create the most useful artifact for this situation. Infer the task, choose the best output format, and do not make commitments that require owner approval.",
+      ].join("\n");
+
+      const result = await fetchJson<{ messages: ChatMessage[]; worker: { summary?: string; error?: string } }>(
+        `/agents/${activeAgent.id}/simulations`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            requester: "workflow",
+            message: transcript,
+            expectedOutput: simulationForm.expectedOutput || "Best-fit artifact based on the conversation.",
+          }),
+        },
+      );
+
+      setSimulationMessages(result.messages);
+      setConversationMessages([]);
+      setSimulationForm(defaultSimulation);
+      setWorkflowStage("artifact");
+      setNotice(result.worker.error ?? result.worker.summary ?? "Artifact created from conversation.");
+      await loadDashboard();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Unable to create artifact.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  function toggleVoiceCapture() {
+    const BrowserSpeechRecognition =
+      window.SpeechRecognition ?? window.webkitSpeechRecognition;
+
+    if (!BrowserSpeechRecognition) {
+      setNotice("Voice capture is not available in this browser. Type the story instead.");
+      return;
+    }
+
+    if (isListening) {
+      setIsListening(false);
+      return;
+    }
+
+    const recognition = new BrowserSpeechRecognition();
+    recognition.lang = "en-US";
+    recognition.interimResults = false;
+    recognition.continuous = false;
+
+    recognition.onstart = () => setIsListening(true);
+    recognition.onend = () => setIsListening(false);
+    recognition.onerror = () => {
+      setIsListening(false);
+      setNotice("Voice capture stopped. You can keep typing if needed.");
+    };
+    recognition.onresult = (event) => {
+      const transcript = Array.from(event.results)
+        .map((result) => result[0]?.transcript ?? "")
+        .join(" ")
+        .trim();
+
+      if (transcript) {
+        setOperatorDraft((current) => `${current} ${transcript}`.trim());
+      }
+    };
+
+    recognition.start();
+  }
+
   useEffect(() => {
     void loadDashboard(selectedCompany);
   }, [selectedCompany]);
@@ -396,9 +586,9 @@ export function App() {
         </div>
 
         <nav className="nav-list" aria-label="Dashboard sections">
-          <a className="nav-item active" href="#tasks">
-            <ClipboardList size={17} />
-            Tasks
+          <a className="nav-item active" href="#workflow">
+            <Wand2 size={17} />
+            Workflow
           </a>
           <a className="nav-item" href="#agents">
             <Users size={17} />
@@ -411,6 +601,10 @@ export function App() {
           <a className="nav-item" href="#artifacts">
             <FileText size={17} />
             Artifacts
+          </a>
+          <a className="nav-item" href="#tasks">
+            <ClipboardList size={17} />
+            Tasks
           </a>
           <a className="nav-item" href="#runtime">
             <Server size={17} />
@@ -441,7 +635,8 @@ export function App() {
             <p className="eyebrow">Control room</p>
             <h1>{company?.name ?? "MGWAI LLC"}</h1>
             <p className="subhead">
-              {company?.description ?? "Company-aware tasks, memory, artifacts, and worker runs."}
+              Tell a department agent the story. MGWAIOS turns the conversation into a task,
+              runs the worker, and saves the artifact.
             </p>
           </div>
           <div className="topbar-actions">
@@ -465,13 +660,224 @@ export function App() {
           <Metric icon={<Users size={18} />} label="Agents" value={agents.length} />
         </section>
 
-        <section className="panel agents-panel" id="agents">
+        <section className="workflow-panel" id="workflow">
+          <div className="workflow-steps" aria-label="Task workflow">
+            <button
+              className={workflowStage === "agent" ? "workflow-step active" : "workflow-step"}
+              type="button"
+              onClick={() => setWorkflowStage("agent")}
+            >
+              <span>1</span>
+              Pick agent
+            </button>
+            <ArrowRight size={17} />
+            <button
+              className={workflowStage === "talk" ? "workflow-step active" : "workflow-step"}
+              type="button"
+              onClick={() => setWorkflowStage("talk")}
+            >
+              <span>2</span>
+              Tell the story
+            </button>
+            <ArrowRight size={17} />
+            <button
+              className={workflowStage === "artifact" ? "workflow-step active" : "workflow-step"}
+              type="button"
+              onClick={() => setWorkflowStage("artifact")}
+            >
+              <span>3</span>
+              Review artifact
+            </button>
+          </div>
+
+          <div className="workflow-layout">
+            <section className="agent-picker" id="agents">
+              <div className="panel-header compact">
+                <h2>Department Agent</h2>
+                <Users size={19} />
+              </div>
+              <div className="agent-card-grid compact-grid">
+                {agents.map((agent) => (
+                  <button
+                    className={agent.id === activeAgent?.id ? "agent-card active" : "agent-card"}
+                    key={agent.id}
+                    type="button"
+                    onClick={() => {
+                      setActiveAgentId(agent.id);
+                      setWorkflowStage("talk");
+                    }}
+                  >
+                    <span>{agent.department}</span>
+                    <strong>{agent.name}</strong>
+                    <small>{agent.personalityPreset?.name ?? "No personality"}</small>
+                  </button>
+                ))}
+              </div>
+
+              {activeAgent ? (
+                <div className="agent-mini">
+                  <label>
+                    Personality
+                    <select
+                      value={activeAgent.personalityPresetId ?? ""}
+                      onChange={(event) => updateAgentPersonality(event.target.value)}
+                      disabled={working}
+                    >
+                      {personalityPresets.map((preset) => (
+                        <option key={preset.id} value={preset.id}>
+                          {preset.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <p>{activeAgent.mission}</p>
+                </div>
+              ) : null}
+            </section>
+
+            <section className="conversation-workspace">
+              <div className="conversation-header">
+                <div>
+                  <p className="eyebrow">{agentCallsign}</p>
+                  <h2>{activeAgent?.name ?? "Choose an agent"}</h2>
+                  <p>
+                    Talk naturally. When the story is complete, type or say
+                    <strong> call that a wrap</strong> to generate the artifact.
+                  </p>
+                </div>
+                <Bot size={22} />
+              </div>
+
+              <div className="chat-window" aria-label="Agent conversation">
+                {conversationMessages.length === 0 ? (
+                  <div className="empty-chat">
+                    <Sparkles size={24} />
+                    <strong>Start with the real-world story.</strong>
+                    <p>
+                      Example: A homeowner called about an upstairs room that is hot in summer
+                      and cold in winter. Ask Eco Sales to prepare the follow-up.
+                    </p>
+                  </div>
+                ) : (
+                  conversationMessages.map((message) => (
+                    <article className={`talk-bubble ${message.role}`} key={message.id}>
+                      <span>{message.role === "operator" ? "You" : activeAgent?.name}</span>
+                      <p>{message.content}</p>
+                    </article>
+                  ))
+                )}
+              </div>
+
+              <div className="voice-bar">
+                <button
+                  className={isListening ? "voice-button listening" : "voice-button"}
+                  type="button"
+                  onClick={toggleVoiceCapture}
+                  title={isListening ? "Stop voice capture" : "Start voice capture"}
+                >
+                  {isListening ? <MicOff size={18} /> : <Mic size={18} />}
+                  {isListening ? "Listening" : "Voice"}
+                </button>
+                <textarea
+                  value={operatorDraft}
+                  onChange={(event) => setOperatorDraft(event.target.value)}
+                  placeholder={`${agentCallsign}, a customer just told me...`}
+                  rows={3}
+                />
+                <button
+                  className="send-button"
+                  type="button"
+                  onClick={() => addOperatorMessage(operatorDraft)}
+                  disabled={working || !operatorDraft.trim()}
+                  title="Send message"
+                >
+                  <Send size={18} />
+                </button>
+              </div>
+
+              <div className="wrap-row">
+                <label>
+                  Output preference
+                  <input
+                    value={simulationForm.expectedOutput}
+                    onChange={(event) =>
+                      setSimulationForm({ ...simulationForm, expectedOutput: event.target.value })
+                    }
+                    placeholder="Optional: customer email, markdown brief, CSV, JSON, HTML"
+                  />
+                </label>
+                <button
+                  className="primary-button"
+                  type="button"
+                  onClick={() => runConversationSimulation()}
+                  disabled={working || conversationMessages.length === 0}
+                >
+                  {working ? <Loader2 className="spin" size={17} /> : <Wand2 size={17} />}
+                  Call That a Wrap
+                </button>
+              </div>
+            </section>
+
+            <aside className="workflow-context">
+              <section className="context-box">
+                <h3>What the agent knows</h3>
+                <div className="mini-memory-list">
+                  {memoryEntries.slice(0, 4).map((entry) => (
+                    <article key={entry.id}>
+                      <span>{entry.category}</span>
+                      <p>{entry.claim}</p>
+                    </article>
+                  ))}
+                </div>
+              </section>
+              <section className="context-box">
+                <h3>Current artifact</h3>
+                <strong>{activeArtifact?.title ?? "No artifact yet"}</strong>
+                <p>{activeArtifact?.reviewStatus ?? "Run a conversation to create one."}</p>
+              </section>
+            </aside>
+          </div>
+        </section>
+
+        <section className="panel artifact-panel" id="artifacts">
           <div className="panel-header">
             <div>
-              <h2>Department Agents</h2>
+              <h2>Artifacts</h2>
+              <p>{artifacts.length} saved worker outputs</p>
+            </div>
+            <FileText size={20} />
+          </div>
+          <div className="artifact-layout">
+            <div className="artifact-list">
+              {artifacts.map((artifact) => (
+                <button
+                  className={artifact.id === activeArtifact?.id ? "artifact-tab active" : "artifact-tab"}
+                  key={artifact.id}
+                  type="button"
+                  onClick={() => setActiveArtifactId(artifact.id)}
+                >
+                  <strong>{artifact.title}</strong>
+                  <span>{artifact.reviewStatus}</span>
+                </button>
+              ))}
+            </div>
+            <article className="artifact-preview">
+              <h3>{activeArtifact?.title ?? "No artifact selected"}</h3>
+              <pre>
+                {activeArtifact?.bodyMarkdown ??
+                  (conversationPreview ||
+                    "Tell an agent a story, then call that a wrap to generate an artifact.")}
+              </pre>
+            </article>
+          </div>
+        </section>
+
+        <section className="panel agents-panel legacy-panel" id="agent-settings">
+          <div className="panel-header">
+            <div>
+              <h2>Agent Settings</h2>
               <p>
-                Persistent department heads with selectable personalities. Worker agents are still spun
-                up per task.
+                Advanced setup for personalities, allowed tasks, approval rules, and direct simulations.
               </p>
             </div>
             <Users size={20} />
@@ -744,34 +1150,6 @@ export function App() {
           </section>
         </section>
 
-        <section className="panel artifact-panel" id="artifacts">
-          <div className="panel-header">
-            <div>
-              <h2>Artifacts</h2>
-              <p>{artifacts.length} saved worker outputs</p>
-            </div>
-            <FileText size={20} />
-          </div>
-          <div className="artifact-layout">
-            <div className="artifact-list">
-              {artifacts.map((artifact) => (
-                <button
-                  className={artifact.id === activeArtifact?.id ? "artifact-tab active" : "artifact-tab"}
-                  key={artifact.id}
-                  type="button"
-                  onClick={() => setActiveArtifactId(artifact.id)}
-                >
-                  <strong>{artifact.title}</strong>
-                  <span>{artifact.reviewStatus}</span>
-                </button>
-              ))}
-            </div>
-            <article className="artifact-preview">
-              <h3>{activeArtifact?.title ?? "No artifact selected"}</h3>
-              <pre>{activeArtifact?.bodyMarkdown ?? "Create and run a task to generate an artifact."}</pre>
-            </article>
-          </div>
-        </section>
       </section>
     </main>
   );
@@ -811,4 +1189,40 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return response.json() as Promise<T>;
+}
+
+function splitWrapCommand(content: string): { message: string; shouldWrap: boolean } {
+  const wrapPattern = /\b(call that a wrap|that's a wrap|thats a wrap|let's wrap|lets wrap|wrap it up)\b/i;
+  const shouldWrap = wrapPattern.test(content);
+
+  return {
+    message: content.replace(wrapPattern, "").trim(),
+    shouldWrap,
+  };
+}
+
+declare global {
+  interface Window {
+    SpeechRecognition?: SpeechRecognitionConstructor;
+    webkitSpeechRecognition?: SpeechRecognitionConstructor;
+  }
+
+  interface SpeechRecognitionConstructor {
+    new (): SpeechRecognition;
+  }
+
+  interface SpeechRecognition extends EventTarget {
+    continuous: boolean;
+    interimResults: boolean;
+    lang: string;
+    onend: (() => void) | null;
+    onerror: (() => void) | null;
+    onresult: ((event: SpeechRecognitionEvent) => void) | null;
+    onstart: (() => void) | null;
+    start(): void;
+  }
+
+  interface SpeechRecognitionEvent {
+    results: SpeechRecognitionResultList;
+  }
 }
